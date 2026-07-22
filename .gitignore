@@ -1,0 +1,42 @@
+# =====================================================================
+# Environnement Python  (949 Mo — ne jamais versionner)
+# =====================================================================
+my_env/
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# =====================================================================
+# Videos sources  (84 Mo)
+# !! ATTENTION : v1.mp4 est la SEULE donnee valide du projet et n'est
+#    donc PAS sauvegardee ici. La sauvegarder ailleurs (disque externe,
+#    Drive...). Voir HANDOFF.md section 2.
+# =====================================================================
+*.mp4
+*.mov
+*.avi
+
+# =====================================================================
+# Documents internes / references
+# Le roadmap est un document interne OCP -> ne pas publier.
+# =====================================================================
+*.pdf
+
+# =====================================================================
+# Donnees intermediaires et obsoletes (regenerables — HANDOFF.md §5)
+# =====================================================================
+assets/data/raw/
+assets/data/raw_v1_dense/
+assets/data/clean/
+assets/data/scores.csv
+assets/contact_sheet.jpg
+features_raw.csv
+
+# Sorties generees par clustering_humidite.py
+resultats/
+
+# =====================================================================
+# macOS
+# =====================================================================
+.DS_Store
