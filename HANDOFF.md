@@ -1,322 +1,453 @@
-# STAGE_CV — État du projet / Handoff
+# Projet Vision par Ordinateur — Granulométrie & Humidité du Stérile
+## Document de reprise global (handoff — zéro perte de contexte)
 
-**Dernière mise à jour :** 2026-07-22
-**But du projet :** OCP / Laverie Beni Amir — détection d'humidité et granulométrie du stérile par vision par ordinateur, à partir de vidéos d'un convoyeur.
+> **Comment utiliser ce fichier :** colle-le en entier au début d'une nouvelle
+> conversation. Il contient TOUT : contexte projet, décisions stratégiques, état réel
+> des données, constats techniques mesurés, scripts produits, pièges connus et plan
+> d'action. Il remplace et fusionne les anciens `MAIN_HANDOFF.md` (cadre projet, 19/07)
+> et `HANDOFF.md` (constats techniques, 22/07).
 
-Ce document contient tout le contexte nécessaire pour reprendre le travail dans une nouvelle session, sans rien perdre.
-
----
-
-## 1. Résumé exécutif — où on en est
-
-| Question | Réponse |
-|---|---|
-| Combien d'images exploitables ? | **11** (toutes issues de v1.mp4) |
-| Peut-on faire du clustering ? | **Non, pas encore** — 11 échantillons < 13 features |
-| Blocage principal | **Manque de données valides**, pas un problème de code |
-| Action prioritaire | **Filmer davantage** (caméra stabilisée, minerai propre) |
-
-Le pipeline de code fonctionne. Ce qui manque, c'est la matière première.
+*Dernière mise à jour : 23 juillet 2026*
 
 ---
 
-## 2. Les vidéos — ce qui est valide et pourquoi
+## 0. ⚡ L'essentiel en 30 secondes
 
-Confirmé avec le superviseur : **seule v1.mp4 contient des données valides.**
+- **Projet :** détecter l'**humidité** (cœur) et la **granulométrie** (optionnel) du
+  stérile sur un convoyeur, par vision par ordinateur. Stage OCP, Laverie Béni Amir.
+- **Approche :** non supervisée (clustering), validée par **jugements d'opérateur**
+  (pas d'accès labo → pas de % d'humidité mesuré).
+- **🔴 Changement de cadrage majeur (23/07) :** l'exploitation est **surtout en LIT
+  DENSE** (minerai remplissant le tapis, comme v2-v5). Le régime **épars** de v1 est le
+  **cas particulier**, pas la norme. Tout le pipeline doit cibler le lit dense en priorité.
+- **🟢 Opportunité clé (23/07) :** l'ingénieur a confirmé une photo « 90% valide, 10% =
+  humidité/boue ». Ce 10% n'est **pas un déchet à jeter — c'est le SIGNAL à détecter**,
+  identifié par un expert. C'est le **premier ancrage de vérité terrain** du projet.
+- **État données :** 5 vidéos + 1 photo. Seule v1 avait passé le filtrage (11 images
+  éparses). Le vrai jeu utile reste à constituer sur le régime dense.
+- **Blocage :** pas technique — **manque de données valides étiquetées**. Le code marche.
+- **Prochaine action à plus fort levier :** faire **marquer par l'ingénieur les zones
+  humides** sur quelques images denses → premières étiquettes → débloque la validation.
 
-> **Définition de « donnée valide »** : la caméra capture de la **pierre propre** — pas de boue, pas de produit.
-> Si de la boue / du produit est visible, **c'est un problème process** : il faut le **signaler au lavage**.
-> (Ce n'est donc pas un défaut à corriger en code — c'est une anomalie terrain à remonter.)
+---
 
+## 1. Contexte du projet
+
+- **Qui :** étudiant en 1ʳᵉ année Génie Informatique, ENSA Khouribga (Maroc). Débutant
+  en vision par ordinateur et machine learning.
+- **Où :** stage à **OCP S.A.**, site **Laverie Béni Amir**, Khouribga.
+- **Sujet :** « Utilisation de la computer vision pour analyser la granulométrie du
+  stérile et détecter la présence excessive d'eau ou d'humidité. »
+- **Convoyeur filmé :** convoyeur des refus et rejets. **Rapide, toujours en marche.**
+- **Langue des livrables :** français.
+
+---
+
+## 2. Décisions stratégiques (cadre du projet)
+
+1. **Cœur = HUMIDITÉ.** La granulométrie est un module **optionnel** (si le temps le permet).
+2. **Approche NON SUPERVISÉE** : clustering (K-means / DBSCAN), puis interprétation des
+   groupes. Aucune donnée labellisée au départ.
+3. **Collecte terrain par l'étudiant**, caméra personnelle (smartphone).
+4. **Ancrages = validation.** Le clustering seul ne dit jamais « ce groupe = humide » ;
+   il faut des points de référence réels liés à des images précises pour donner un sens
+   physique aux clusters. **Un cluster sans ancrage reste « groupe non interprété ».**
+5. **Pas d'accès labo → ancrages QUALITATIFS.** Les points d'ancrage ne sont pas des %
+   d'humidité mesurés, mais des **jugements visuels d'un opérateur/ingénieur** (sec /
+   normal / humide), notés avec l'heure et la zone. Conséquence assumée : le système est
+   un **classifieur relatif** (tendance dans le temps), pas un capteur de % absolu. À
+   présenter dans le rapport comme un **choix méthodologique justifié**, pas une lacune.
+   → *Le « 10% = humidité » de l'ingénieur (§4) EST un ancrage qualitatif de ce type.*
+6. **Diversité > volume.** Une vidéo de 2-3 min ne vaut que **quelques échantillons
+   réellement différents** (le matériau change peu sur la durée). La vraie diversité
+   vient du **nombre de sorties distinctes** (jours, heures, météo, zones, débits).
+7. **Pas de data augmentation pour le clustering.** Flip/rotation/luminosité artificiels
+   écartés en Phase 4 : les features (intensité, HSV, texture) **sont** le signal
+   d'humidité — une augmentation photométrique le fausse, une géométrique crée des
+   quasi-doublons qui biaisent coude et silhouette. À reconsidérer seulement en Phase 5
+   (supervisé), et uniquement en géométrique (flip, léger crop) — jamais photométrique.
+
+---
+
+## 3. 🔴 Les deux régimes visuels (recadrage du 23/07)
+
+Le taux de remplissage du tapis **varie avec le débit**. Il y a donc DEUX régimes visuels
+très différents, et l'exploitation est **surtout en régime dense** :
+
+| | Régime ÉPARS (v1) | Régime DENSE (v2-v5, photo 23/07) — **la norme** |
+|---|---|---|
+| Matière | cailloux isolés (~15-20%) | lit **dense** remplissant le tapis |
+| Cailloux | **séparés** (faciles à segmenter) | **collés** (segmentation difficile) |
+| Tapis | sombre, mouillé, très visible | visible surtout sur les bords |
+| Représentativité | **cas particulier** (bas débit) | **cas courant** |
+
+**Conséquences capitales :**
+- **On ne peut pas mélanger les deux régimes dans un même jeu de clustering** : les
+  clusters sépareraient « dense » de « épars » (= le débit / les conditions de prise de
+  vue), pas l'humidité. C'est exactement la fuite déjà mesurée (§5.3). **Un régime = un
+  jeu cohérent**, ou un traitement qui gère explicitement le remplissage.
+- **Le masquage actuel de `test1.py` ne marche que sur l'épars** (voir §7 et §9.B). Il
+  faut une segmentation **adaptative au remplissage** pour le régime dense.
+- **`stone_coverage_frac` (taux de remplissage) est une vraie variable d'exploitation**
+  (le débit), pas un parasite — d'où son statut de feature explicite. Mais elle
+  dominera tout clustering brut si le remplissage varie : à normaliser ou traiter comme
+  axe séparé.
+
+---
+
+## 4. 🟢 La photo du 23/07 & la première vérité terrain
+
+L'ingénieur a confirmé sur une photo de **lit dense** : **« 90% valide, 10% = humidité/boue »**.
+
+**Reformulation cruciale :** ce n'est PAS « 90% à garder + 10% à jeter ». C'est une image
+**quasi-sèche de référence, avec des zones humides identifiées par un expert**. Le 10%
+humide **est le phénomène qu'on cherche à détecter** — donc du signal étiqueté, pas du bruit.
+
+**Pourquoi c'est décisif :** depuis le début, le projet bute sur UN problème — impossible
+de distinguer « pierre mouillée » de « ombre / éclairage / tapis qui transparaît » (le
+clustering a toujours suivi les conditions de prise de vue, pas l'humidité, cf. §5.3).
+Un avis d'expert « ici c'est humide, là c'est sec » est **exactement l'ancrage
+qualitatif** prévu par la décision §2.5, et **la seule façon de valider** qu'une feature
+détecte vraiment l'humidité.
+
+**➡️ Action à plus fort levier du moment :** demander à l'ingénieur de **marquer/entourer
+les zones humides** sur cette photo (et 2-3 autres) — même un cercle au feutre sur une
+capture suffit. Ça crée le **premier jeu étiqueté** et débloque toute la validation.
+
+**Limites de cette photo à garder en tête :**
+- C'est **une photo fixe unique**, pas un jeu de données. Nette (photo) mais isolée.
+- **Perspective oblique** (prise de la passerelle en biais) : les cailloux du haut sont
+  plus loin → plus petits en pixels à taille physique égale. **Biais direct pour la
+  granulométrie.** Corriger : angle plus perpendiculaire, et/ou objet de taille connue
+  dans le champ pour calibrer px→mm.
+
+---
+
+## 5. Constats techniques mesurés (session du 22/07)
+
+### 5.1 Les vidéos — validité
 | Vidéo | Durée | Résolution | Statut | Raison |
 |---|---|---|---|---|
-| **v1.mp4** | 20.3 s | 848×478 @30fps | ✅ **VALIDE** | Pierre propre, sèche, vérifiée visuellement (début/milieu/fin) |
-| v2.mp4 | 64.9 s | 848×478 @30fps | ❌ invalide | boue / produit |
-| v3.mp4 | 220.1 s | 848×478 @30fps | ❌ invalide | boue / produit |
-| v4.mp4 | 26.2 s | 848×478 @30fps | ❌ invalide | + **100 % des images floues** (caméra bougée en continu) |
-| v5.mp4 | 61.4 s | **478×850 (portrait !)** | ❌ invalide | + **100 % des images floues** ; orientation différente des autres |
+| **v1.mp4** | 20.3 s | 848×478 @30fps | ✅ valide | Pierre propre, **mais éparse** (bas débit, peu représentatif) |
+| v2.mp4 | 64.9 s | 848×478 @30fps | ❌ invalide | boue / produit *(mais bon régime : dense)* |
+| v3.mp4 | 220.1 s | 848×478 @30fps | ❌ invalide | boue / produit *(bon régime : dense)* |
+| v4.mp4 | 26.2 s | 848×478 @30fps | ❌ invalide | boue + **100% flou** (caméra bougée en continu) |
+| v5.mp4 | 61.4 s | **478×850 (portrait !)** | ❌ invalide | boue + **100% flou** ; orientation différente |
 
-⚠️ **v5 est en portrait**, contrairement à toutes les autres. À ne pas mélanger sans redimensionnement si un jour elle redevient utilisable.
+⚠️ **v5 est en portrait**, contrairement aux autres — ne pas mélanger sans redimensionnement.
 
-### Cause du flou : caméra tenue à la main
-L'utilisateur a confirmé avoir **filmé à main levée, sans chercher la stabilité**.
-Preuve mesurée : à l'intérieur de la *même* vidéo (v3), la netteté varie de **~1 000 à ~25 000** (facteur 25×).
-Un convoyeur à vitesse constante avec caméra fixe produirait un flou **constant**. Cette variance énorme = **tremblement de main**, pas le convoyeur.
+**Nuance importante (23/07) :** v2-v5 sont « invalides » à cause de la **boue** (qui est
+justement le signal humidité !) et du **flou**, PAS parce qu'elles sont denses. Leur
+densité est au contraire **représentative**. À réexploiter une fois le flou géré et les
+zones humides étiquetées.
 
-**Conséquence :** ce flou est un artefact de captation, pas un signal physique. Le filtrer était correct.
+### 5.2 Cause du flou : caméra tenue à la main
+L'utilisateur a confirmé filmer **à main levée, sans stabilité**. Preuve : dans la *même*
+vidéo (v3), la netteté varie de ~1 000 à ~25 000 (**facteur 25×**). Un convoyeur à vitesse
+constante + caméra fixe donnerait un flou **constant**. Cette variance = **tremblement de
+main**, pas le convoyeur. Donc ce flou est un **artefact de captation**, à filtrer.
+*(Un futur flou dû à la vitesse du tapis avec caméra fixe serait, lui, légitime et
+constant — à conserver le cas échéant.)*
 
----
-
-## 3. Ce qui a été fait dans cette session
-
-### 3.1 Correction du filtre de flou
-`assets/blurry.py` était **cassé** : le script entier était collé deux fois, ligne 26 indentée → `IndentationError`. Il ne pouvait pas s'exécuter. *(Ce fichier a depuis été supprimé — il n'existe plus.)*
-
-Remplacé par **`assets/clean_frames.py`** :
-- **Score de netteté** : Tenengrad (énergie du gradient de Sobel) au lieu de la variance du Laplacien
-- **Plancher adaptatif** : rejette les 10 % les plus flous (`FLOOR_PERCENTILE = 10`)
-- **Le plus net par fenêtre** : garde 1 seule image par fenêtre de N images consécutives → supprime les quasi-doublons (les frames vidéo se chevauchent énormément)
-- **Garde-fou anti-doublon** : ignore un candidat trop proche de la dernière image gardée
-- **`MANUAL_REJECT`** : liste d'images rejetées à la main après contrôle visuel
-- **Journal d'audit** : `scores.csv` avec chaque décision + sa raison
-
-Résultat sur l'ancien jeu (196 images, 5 vidéos) : 196 → 31 images.
-
-### 3.2 ⚠️ PIÈGE CONNU dans `clean_frames.py`
-```python
-MANUAL_REJECT = {"frame_0167.jpg", "frame_0174.jpg", ...}
-```
-Ces noms correspondent aux images **v5 de l'ancienne extraction** (1 image / 2 s sur les 5 vidéos).
-**Si tu ré-extrais des images avec une numérotation différente, cette liste devient fausse et peut rejeter de bonnes images par accident.**
-→ **Vider `MANUAL_REJECT` avant toute nouvelle extraction**, puis la reconstituer après contrôle visuel.
-
-De même, `SRC = "data/raw"` et `DST = "data/clean"` sont **relatifs** : le script doit être lancé **depuis `assets/`**.
-
-### 3.3 Clustering — le diagnostic a détecté une fuite
-`clustering_humidite.py` contient déjà un excellent garde-fou : il compare les clusters à la vidéo d'origine (ARI / NMI).
-
-Résultats sur les 31 images (avant que v2–v5 soient déclarées invalides) :
+### 5.3 Le clustering a détecté une fuite (données de prise de vue, pas humidité)
+`clustering_humidite.py` compare les clusters à la vidéo d'origine (ARI / NMI) :
 
 | Jeu de features | NMI (cluster vs vidéo) | Verdict |
 |---|---|---|
 | `toutes` | **0.887** | 🔴 les clusters = les vidéos, pas l'humidité |
 | `robuste` (texture seule) | **0.640** | 🟡 dépendance partielle |
-| v3 seule (n=23) | — | K=4 trouvé, mais DBSCAN classe 11/23 points en bruit |
+| v3 seule (n=23) | — | K=4, mais DBSCAN classe 11/23 en bruit |
 
-**Conclusion : le « signal humidité » n'était que les conditions de prise de vue.**
+**Conclusion : le « signal humidité » n'était que les conditions de prise de vue.** D'où
+l'importance des ancrages (§4).
 
-### 3.4 Test : peut-on travailler sur les données brutes (non filtrées) ?
-Testé sur les 196 images brutes. **Réponse : non.**
+### 5.4 Données brutes (non filtrées) : dominées par le flou
+Test sur 196 images brutes : **η² = 0.805** (80.5% de la variance de netteté expliquée par
+le cluster) ; `glcm_contrast` corrèle à **r = +0.88** avec la netteté. Raison physique : le
+flou détruit les hautes fréquences que GLCM/LBP mesurent. **Entraîner sur données floues
+non filtrées = apprendre à détecter le flou, pas l'humidité.**
 
-- **η² = 0.805** → 80.5 % de la variance de netteté est expliquée par l'appartenance au cluster
-- `glcm_contrast` corrèle à **r = +0.88** avec le score de netteté
-- `glcm_correlation` : r = −0.79 · PC1 : r = −0.72
+### 5.5 v1 plafonne à ~11 images
+Extraction dense de v1 : 5 fps → 102 images → **11 gardées**. Vérifié : 15 fps → 305
+images → **exactement les mêmes 11**. Vrai plafond : 20 s ne contiennent que ~11 instants
+indépendants. **Le facteur limitant est la durée de tournage, pas l'échantillonnage.**
 
-**Raison physique :** le flou détruit exactement les hautes fréquences que GLCM et LBP mesurent. Un modèle entraîné sur données brutes apprendrait à **détecter le flou**, pas l'humidité.
+### 5.6 `test1.py` amélioré + reflet du soleil résolu
+Masquage du tapis + GLCM corrigée implémentés (§9). Problème découvert au passage : un
+simple Otsu classait la **large tache de reflet du soleil sur tapis mouillé** comme pierre
+(**12.8% de l'image** sur `frame_0008`). Ni couleur ni texture ne la séparent proprement.
+**Solution : top-hat blanc** (noyau 41 px) avant Otsu → supprime les zones claires plus
+grandes que le noyau (reflet) et garde les cailloux. **Résultat : 12.8% → 1.3%.**
 
-### 3.5 Ré-extraction dense de v1 — plafond atteint
-L'extraction d'origine (1 image / 2 s) ne tirait que **10 images** de v1. Ré-extraction à 5 fps → 102 images → **11 gardées**.
-
-Vérification : ré-extraction à **15 fps → 305 images → exactement les mêmes 11 images gardées.**
-
-➡️ **C'est un vrai plafond.** 20 secondes de vidéo ne contiennent qu'environ 11 « instants » indépendants de minerai. Échantillonner plus dense n'invente pas de contenu. **Le facteur limitant est la durée de tournage.**
-
-### 3.6 🔬 Découverte importante : le tapis fausse les features
-Les features actuelles sont calculées sur **toute l'image**, or l'image contient le **tapis noir** (fond) + la **pierre** (objet).
-
-Mesuré sur les 11 images v1 :
-
-| Mesure | Valeur |
-|---|---|
-| Couverture pierre | 18.2 % → 25.1 % (écart 6.9 pts) |
-| **corr(couverture, `gray_mean` image entière)** | **+0.727** |
-| corr(couverture, `gray_mean` pierre seule, masque Otsu) | −0.441 |
-
-➡️ **`gray_mean` mesure surtout « combien de pierre il y a dans le cadre », pas « à quel point elle est humide ».**
-C'est un confondant majeur, en plus de celui de l'éclairage. À corriger (voir §6).
-
-*(Indicatif : n=11, mais le mécanisme physique est évident.)*
-
----
-
-### 3.7 ✅ `test1.py` ameliore (fait)
-Le masquage du tapis et la correction GLCM (§6.A et §6.B) **ont ete implementes**.
-
-**Nouveau probleme decouvert et resolu au passage : le reflet du soleil.**
-Un simple seuil d'Otsu classait la **large tache brillante du soleil sur le tapis mouille** comme de la pierre — **12.8 % de l'image** sur `frame_0008`.
-- Ni la couleur ni la texture ne la separent : distributions trop recouvrantes
-  (R−B median : reflet −9 / pierre +19, mais recouvrement massif)
-- **Solution : top-hat blanc** (`image − ouverture`, noyau 41 px) avant Otsu.
-  Par construction, supprime les zones claires **plus grandes** que le noyau (le reflet)
-  et conserve les objets clairs **plus petits** (les cailloux)
-- **Resultat : plus grosse composante 12.8 % → 1.3 %** de l'image ; 128–188 composantes detectees par image (= les cailloux). Verifie visuellement.
-
-**Effet sur le confondant de couverture :**
+Effet sur le confondant de couverture :
 
 | | corr(couverture, `gray_mean`) |
 |---|---|
-| Avant (image entiere) | **+0.727** |
-| Apres (pierre seule + top-hat) | **−0.524** |
+| Avant (image entière) | **+0.727** |
+| Après (pierre seule + top-hat) | **−0.524** |
 
-Le confondant d'intensite est donc **corrige**.
-
-⚠️ **Mais un couplage subsiste sur les features de texture** : 12 des 24 features
-(surtout GLCM contrast/homogeneity/correlation) correlent encore a |r| > 0.7 avec la couverture.
-**Interpretation prudente : avec n = 11 issues d'une seule video de 20 s, on ne peut pas
-distinguer un vrai couplage physique (couverture et granulometrie sont liees)
-d'un artefact de petit echantillon.** A retrancher une fois plus de donnees disponibles.
+⚠️ Couplage résiduel : 12/24 features corrèlent encore à |r|>0.7 avec la couverture. Avec
+n=11 d'une seule vidéo, **impossible de distinguer** un vrai couplage physique (couverture
+↔ granulométrie) d'un artefact de petit échantillon. À retrancher avec plus de données.
 
 ---
 
-## 4. Inventaire des fichiers
+## 6. L'approche technique en une phrase
 
-### ✅ À GARDER — code vivant
+> Images terrain → **vecteur de features** par image (remplissage, intensité, HSV,
+> texture GLCM/LBP, sur la pierre uniquement) → **clustering** (K-means / DBSCAN) →
+> **interprétation** de chaque groupe en humidité *relative* via des **ancrages
+> qualitatifs horodatés** (jugements d'opérateur/ingénieur) → **alerte** si excessif.
 
+---
+
+## 7. Inventaire des fichiers
+
+### ✅ Code vivant
 | Fichier | Rôle | État |
 |---|---|---|
-| `assets/clean_frames.py` | Filtre flou + doublons (le bon) | ✅ à jour — ⚠️ voir piège §3.2 |
-| `clustering_humidite.py` | KMeans/DBSCAN + diagnostic de fuite | ✅ bon, garde-fou précieux |
-| `test1.py` | Extraction de features (masque tapis + GLCM multi-échelle) | ✅ **amélioré** (§3.7) — 26 features |
-| `assets/v1.mp4` | **La seule source de données valides** | ✅ **CRITIQUE — ne pas supprimer** |
-| `my_env/` | Environnement Python (voir §7) | ✅ |
-| `CV_Granulometry_Moisture_Roadmap.pdf` | Feuille de route du projet | 📄 référence |
-| `DL_for_OreGranulometry.pdf` | Article deep learning granulométrie | 📄 référence |
+| `assets/clean_frames.py` | Filtre flou (Tenengrad) + doublons, journal d'audit | ✅ à jour — ⚠️ voir piège §8 |
+| `test1.py` | Extraction 26 features (masque pierre/tapis, GLCM multi-échelle) | ✅ amélioré (§9) — ⚠️ **calibré épars** |
+| `clustering_humidite.py` | KMeans/DBSCAN + diagnostic de fuite cluster-vs-source | ✅ bon, garde-fou précieux |
+| `visual.py` | Histogrammes rapides. ⚠️ 2 bugs mineurs : `plt.show()` hors boucle, `xlabel`/`ylabel` inversés | 🟡 |
 
-### 🟡 À GARDER pour l'instant
-
+### 🟡 Données & vidéos
 | Fichier | Remarque |
 |---|---|
-| `assets/data/clean_v1/` (11 images) | **Le jeu de données actuel.** Régénérable depuis v1.mp4 |
-| ~~`assets/data/scores_v1_dense.csv`~~ | ⚠️ **supprimé lors du nettoyage.** C'était le journal d'audit des 11 images — régénérable en relançant le filtrage (§5) |
-| `assets/v2–v5.mp4` | Invalides pour l'entraînement, **mais utiles comme preuve** pour le signalement boue/produit au lavage |
-| `visual.py` | Petit utilitaire histogrammes. ⚠️ 2 bugs mineurs : `plt.show()` hors de la boucle, et `xlabel`/`ylabel` inversés |
+| `assets/v1.mp4` | Seule vidéo « valide » (mais éparse). ⚠️ **NON sauvegardée hors disque — à copier ailleurs** |
+| `assets/v2–v5.mp4` | Denses = bon régime, mais boue+flou. Utiles comme **preuve** pour le signalement lavage, et réexploitables plus tard |
+| `assets/data/clean_v1/` (11 img) | Jeu épars actuel. Régénérable depuis v1 (§10) |
+| `assets/data/scores.csv` | ⚠️ obsolète (ancienne extraction 5 vidéos) — à ignorer/supprimer |
+| `features.csv` | 26 features × 11 images (régime épars) |
+| ~~`scores_v1_dense.csv`~~ | Supprimé au nettoyage — régénérable (§10) |
 
-### ❌ À SUPPRIMER — obsolète
+### ❌ Non versionné (`.gitignore`)
+`my_env/` (949 Mo), toutes les `*.mp4` (84 Mo), les `*.pdf` (dont le roadmap **interne
+OCP** — ne pas publier), `resultats/`, données intermédiaires, `.claude/`, `.DS_Store`.
 
-| Chemin | Pourquoi |
-|---|---|
-| `data/` (à la racine) | **Dossier vide**, créé par erreur quand `blurry.py` a tourné depuis le mauvais répertoire |
-| `assets/data/raw/` (196 img) | Ancienne extraction 1 img/2 s des 5 vidéos — dont 4 invalides. Régénérable |
-| `assets/data/clean/` (31 img) | 2 img de v1 + 6 de v2 + 23 de v3 → **29/31 proviennent de vidéos invalides** |
-| `assets/data/scores.csv` | Audit de l'extraction obsolète ci-dessus |
-| `assets/data/raw_v1_dense/` (102 img) | Intermédiaire — régénérable en 1 commande ffmpeg (§5) |
-| `features.csv` | Calculé sur les 31 images (donc majoritairement données invalides) — **périmé** |
-| `features_raw.csv` | Artefact du test §3.4 — conclusion déjà consignée ici |
-| `resultats/*` (8 fichiers) | Tous issus du clustering sur données invalides — résultats consignés en §3.3 |
-| `assets/contact_sheet.jpg` | Planche de contrôle visuel — régénérable |
-| `.DS_Store` | Déchet macOS |
-
-**Commande de nettoyage** (à relire avant de lancer) :
-```bash
-cd /Users/oussamahabiballah/ensa/STAGE_CV
-rm -rf data                              # dossier vide à la racine
-rm -rf assets/data/raw assets/data/clean assets/data/raw_v1_dense
-rm -f  assets/data/scores.csv
-rm -f  features.csv features_raw.csv
-rm -rf resultats
-rm -f  assets/contact_sheet.jpg
-find . -name .DS_Store -delete
-```
-> ⚠️ Ne supprime **jamais** `assets/v1.mp4` ni `assets/data/clean_v1/`.
-> Les v2–v5 sont à conserver tant que le signalement au lavage n'est pas fait.
+> **Rappel dépôt GitHub :** https://github.com/Ousszmz/ComputerVision_granulometry —
+> ⚠️ **PUBLIC** et contient des photos d'installation OCP. Envisager de le passer en privé
+> (Settings → Danger Zone) et vérifier avec l'encadrant.
 
 ---
 
-## 5. Comment régénérer les 11 images v1 (reproductible)
+## 8. ⚠️ Piège connu dans `clean_frames.py`
+- `MANUAL_REJECT = {...}` liste des noms d'images d'une **ancienne** extraction. Si tu
+  ré-extrais avec une numérotation différente, **cette liste devient fausse et peut
+  rejeter de bonnes images**. → **La vider avant toute nouvelle extraction**, la
+  reconstituer après contrôle visuel.
+- `SRC`/`DST` sont **relatifs** → lancer le script **depuis `assets/`**.
+
+---
+
+## 9. `test1.py` — features et améliorations restantes
+
+**Fait (session 22/07) :** 26 features, calculées sur la **pierre uniquement** (masque
+top-hat + Otsu), GLCM **multi-distance [1,2,4,8] × 4 angles** quantifiée 64 niveaux
+(moyenne sur angles = invariance rotation), `stone_coverage_frac` explicite.
+
+**À faire, par ordre d'impact :**
+
+- **A. 🔴 Segmentation ADAPTATIVE aux deux régimes.** Le masque actuel (top-hat noyau 41)
+  est calibré pour l'**épars** ; il **efface l'intérieur d'un lit dense**. Pour le régime
+  dense (la norme), refaire la segmentation — idéalement classifier chaque pixel en
+  **tapis / pierre / fines-humides** plutôt qu'un simple seuil. ⚠️ **Ne pas coder à
+  l'aveugle : attendre 1-2 images étiquetées** (§4) pour pouvoir vérifier.
+- **B. Recalibrer `TOPHAT_KERNEL`** selon distance/angle de prise de vue (les cailloux
+  changent de taille en pixels). **Revérifier visuellement le masque** à chaque nouveau
+  régime.
+- **C. 🟠 Granulométrie par segmentation (vrai livrable métier).** Les features de texture
+  globale sont un proxy faible. Le livrable, c'est une **distribution de tailles (D50,
+  D80)**. Options : **watershed** (simple, sans annotation — marche bien sur l'épars ;
+  sur le dense les grains se touchent, plus dur), **SAM** (zero-shot, robuste), **Mask
+  R-CNN** (nécessite annotations). Le masque pierre/tapis en est déjà la 1ʳᵉ étape.
+- **D. 🟠 Embeddings pré-entraînés (DINOv2)** comme alternative aux features manuelles —
+  souvent plus robuste, mais moins interprétable (compte pour le rapport).
+- **E. 🟡 Humidité ↔ éclairage.** L'humidité se voit par assombrissement + reflet
+  spéculaire → confondue avec l'éclairage. **Mire de référence** (carton gris) dans le
+  champ, ou éclairage constant, ou les ancrages de §4 pour valider.
+
+---
+
+## 10. Régénérer les 11 images v1 (reproductible)
 
 ```bash
 cd /Users/oussamahabiballah/ensa/STAGE_CV
-
-# 1. Extraction dense de v1 à 5 fps  -> 102 images candidates
 mkdir -p assets/data/raw_v1_dense
 ffmpeg -v error -i assets/v1.mp4 -vf fps=5 -qscale:v 2 \
        assets/data/raw_v1_dense/frame_%04d.jpg
-
-# 2. Filtrage (paramètres utilisés : WINDOW=10, FLOOR_PERCENTILE=10, DEDUP_MAX_DIFF=4.0)
-#    -> 11 images retenues
+# puis filtrage : WINDOW=10, FLOOR_PERCENTILE=10, DEDUP_MAX_DIFF=4.0  -> 11 images
 ```
-Images retenues : `frame_0008, 0011, 0021, 0039, 0045, 0057, 0065, 0079, 0084, 0092, 0102`
-Statistiques de netteté : min 5 650 · médiane 7 989 · max 14 893 · plancher p10 = 6 455
-
-> Aller au-delà de 5 fps est inutile : 15 fps donne exactement les mêmes 11 images.
+Images retenues : `frame_0008, 0011, 0021, 0039, 0045, 0057, 0065, 0079, 0084, 0092, 0102`.
+Aller au-delà de 5 fps est inutile (15 fps → mêmes 11 images).
 
 ---
 
-## 6. Améliorer l'extraction de features — au-delà de `test1.py`
+## 11. Feuille de route (Phases 0 → 7)
 
-`test1.py` fonctionne, mais présente de vraies faiblesses. Par ordre d'impact :
+| Phase | Nom | Statut |
+|---|---|---|
+| 0 | Fondations & environnement Python | ✅ fait (§14) |
+| 1 | Traitement d'image : couleur & texture | ✅ largement fait |
+| 2 | **Collecte de données terrain** (CŒUR) | 🟡 en cours — recadrer sur le **lit dense** |
+| 3 | **Extraction de features** (CŒUR) | ✅ v1 ; 🔴 à adapter au dense (§9.A) |
+| 4 | **Clustering non supervisé & validation** (CŒUR) | 🟡 pipeline prêt ; bloqué sur données+ancrages |
+| 5 | Semi-supervisé (RandomForest/SVM) | Plus tard (≥ 20-30 ancrages) |
+| 6 | Granulométrie (watershed / SAM) | Optionnel (§9.C) |
+| 7 | Intégration & dashboard Streamlit | À faire |
 
-### 🔴 A. Masquer le tapis (le plus important)
-**Problème mesuré (§3.6) :** `gray_mean` corrèle à +0.73 avec la couverture de pierre. Les features mesurent la quantité de pierre, pas son humidité.
+**Chemin principal = Phases 0→4 + Phase 7.**
 
-**Correction :** segmenter pierre / tapis (seuil d'Otsu suffit — le tapis est noir, la pierre claire), puis :
-- calculer **toutes** les features **uniquement sur les pixels pierre**
-- ajouter `stone_coverage_frac` comme feature **explicite et séparée** (c'est une vraie information granulométrique — un débit, pas un parasite déguisé)
-
-### 🔴 B. GLCM mal paramétré
-Actuellement : `DISTANCE=1`, `ANGLE=0`, `levels=256`.
-- Une seule distance de 1 px et **un seul angle (horizontal)** → aveugle aux structures verticales/diagonales, et à toute texture plus grossière qu'un pixel
-- `levels=256` → matrice 256×256 très creuse, lente et bruitée
-
-**Correction standard :**
-```python
-distances = [1, 2, 4, 8]                          # multi-échelle
-angles    = [0, np.pi/4, np.pi/2, 3*np.pi/4]      # 4 directions
-# quantifier en 32 ou 64 niveaux avant graycomatrix
-# puis MOYENNER sur les angles -> invariance à la rotation
-```
-
-### 🟠 C. Passer à la granulométrie par segmentation (vrai objectif métier)
-Les features de texture globale sont un **proxy faible** de la granulométrie. Le vrai livrable industriel, c'est une **distribution de tailles de particules** (D50, D80…).
-
-Approches, de la plus simple à la plus lourde :
-1. **Watershed classique** (OpenCV) — segmentation des cailloux individuels, puis mesure d'aire / diamètre équivalent. Pas d'annotation nécessaire, marche bien si les cailloux se touchent peu (**c'est le cas sur v1** : couverture ~20 %, cailloux bien séparés)
-2. **SAM (Segment Anything)** — segmentation zero-shot, aucun entraînement, très robuste
-3. **Mask R-CNN** — nécessite des annotations manuelles (cf. `DL_for_OreGranulometry.pdf`)
-
-➡️ **Vu la faible couverture (~20 %) et les cailloux bien séparés sur v1, le watershed est un excellent point de départ** et donne directement les métriques métier.
-
-### 🟠 D. Embeddings de réseau pré-entraîné (alternative au handcrafted)
-Au lieu de GLCM/LBP, extraire des embeddings d'un CNN pré-entraîné (ResNet, ou **DINOv2** qui est excellent en non-supervisé) et clusteriser dessus. Souvent bien plus robuste que les features manuelles — mais **moins interprétable**, ce qui compte pour un rapport de stage.
-
-### 🟡 E. L'humidité a besoin d'une référence
-L'humidité se voit par l'assombrissement et la réflexion spéculaire — donc **directement confondue avec l'éclairage**. Sans contrôle, impossible de séparer « pierre mouillée » de « nuage devant le soleil ».
-
-**Corrections possibles :**
-- placer une **mire de référence** (carton gris/blanc) dans le champ → normaliser la luminance de chaque image
-- ou filmer sous **éclairage contrôlé / constant**
-- ou obtenir des **mesures réelles d'humidité** au moment du tournage, pour valider les clusters contre une vérité terrain
+**Architecture cible :** frames → filtre flou → ROI matériau + normalisation éclairage →
+[moteur humidité : features → PCA → clustering] ← **validation par ancrages opérateur
+horodatés** → interprétation (cluster ↔ ancrage → humidité relative + alerte) → stockage
+SQLite + dashboard Streamlit (badge vert/orange/rouge, nuage PCA, historique, export CSV).
+Granulométrie en branche optionnelle. **Un cluster sans ancrage = « non interprété ».**
 
 ---
 
-## 7. Environnement technique
+## 12. Combien de données ?
 
-- **Python : 3.14.6** dans `my_env/` — ⚠️ toujours utiliser `./my_env/bin/python`, pas le `python` système
-- Paquets : opencv-python 5.0.0.93 · numpy 2.5.1 · pandas 3.0.3 · scikit-learn 1.9.0 · scikit-image 0.26.0 · matplotlib 3.11.0
-- `ffmpeg` / `ffprobe` disponibles dans `/usr/local/bin/`
-- ❌ Pas de lecteur PDF installé (les 2 PDF n'ont pas pu être lus automatiquement)
-- ❌ Le projet **n'est pas un dépôt git** → aucun historique, aucune sauvegarde. **Fortement recommandé : `git init`**
+| Scénario | Images terrain | Ancrages qualitatifs | Fiabilité |
+|---|---|---|---|
+| Prototype | 40 – 50 | 3 – 5 | Exploration |
+| Solide | 100 – 150 | 5 – 10 | Interprétation crédible |
+| Déployable | 200+ | 10+ | Confiance élevée |
 
----
-
-## 8. Plan d'action — que faire maintenant
-
-### Priorité 1 — Filmer plus (débloque tout le reste)
-Rien d'autre ne peut avancer sérieusement avec 11 images.
-
-- [ ] **Stabiliser le téléphone** : le poser sur la rambarde / le carter du convoyeur, le scotcher ou le caler. Pas besoin d'un vrai trépied — le but est juste que le téléphone ne bouge **pas indépendamment** du tapis
-- [ ] **Filmer plus longtemps** : ~20 s → 11 images, donc **~3 minutes de minerai propre ≈ 90–100 images exploitables** (ordre de grandeur, à confirmer)
-- [ ] **Garder distance et angle constants** entre les prises → supprime le confondant « session » détecté en §3.3
-- [ ] **Vérifier la validité pendant toute la durée** (pierre propre, pas de boue/produit) — pas seulement au démarrage
-- [ ] Si possible : **mire de référence** dans le champ (§6.E)
-- [ ] Si possible : **noter l'humidité réelle** au moment du tournage → vérité terrain
-
-### Priorité 2 — Signalement process (indépendant de la CV)
-- [ ] Remonter au **lavage** la présence de boue / produit constatée sur v2–v5
-- [ ] Extraire des images horodatées de v2–v5 comme **preuve** à joindre au signalement
-
-### Priorité 3 — Améliorer le code (faisable dès maintenant, sans nouvelles données)
-- [x] ~~Ajouter le **masquage du tapis** + `stone_coverage_frac` (§6.A)~~ ✅ fait (§3.7)
-- [x] ~~Corriger les **paramètres GLCM** (§6.B)~~ ✅ fait (§3.7)
-- [ ] ⚠️ **Le masque est calibré sur v1** (`TOPHAT_KERNEL = 41`). Sur de nouvelles vidéos
-      (distance/angle différents → cailloux plus gros ou plus petits en pixels),
-      **revérifier visuellement le masque** et réajuster le noyau si besoin
-- [ ] Prototyper la **granulométrie par watershed** sur les 11 images v1 (§6.C) — c'est le livrable métier
-      (le masque pierre/tapis de `test1.py` en est déjà la première étape)
-- [ ] Vider `MANUAL_REJECT` dans `clean_frames.py` avant toute nouvelle extraction (§3.2)
-- [ ] `git init` + premier commit
-
-### Priorité 4 — Quand les données seront là
-- [ ] Relancer extraction → filtrage → features → clustering
-- [ ] **Toujours vérifier le NMI cluster-vs-source** : si > 0.45, le résultat n'est pas de l'humidité
-- [ ] Viser **au moins 10 échantillons par feature** (donc ≥ 130 images pour 13 features) avant de croire un clustering
+- **Le ratio compte plus que le volume.** 100 images + 0 ancrage = rien de prouvé.
+- **Piège vidéo :** des centaines de frames de quelques minutes du même tas ≠ autant
+  d'images différentes. 50 images vraiment variées > 500 quasi-identiques.
+- **Garde-fou chiffré :** viser **≥ 10 images par feature** avant de croire un clustering
+  (donc ≥ 260 pour 26 features). `test1.py` l'affiche en avertissement.
 
 ---
 
-## 9. Règles à ne pas oublier
+## 13. Checklist terrain (mise à jour 23/07)
 
-1. **Le diagnostic de fuite de `clustering_humidite.py` n'est pas décoratif.** NMI > 0.45 = le résultat reflète les conditions de tournage, pas le minerai.
-2. **Ne jamais entraîner sur données floues non filtrées** — le modèle apprendra à détecter le flou (η² = 0.805, §3.4).
-3. **« Le plus net de la fenêtre » ne garantit pas « net »** — si toute la fenêtre est floue, il ressort quand même une image floue. D'où `MANUAL_REJECT` et le contrôle visuel.
-4. **Toujours contrôler visuellement** (planche contact) avant de valider un jeu de données. C'est ce qui a permis de détecter le problème sur v5.
-5. **Le flou de ces vidéos vient de la main, pas du convoyeur.** Un futur flou dû à la vitesse du tapis avec caméra fixe serait, lui, légitime et à conserver — mais il devra être **constant**.
+**Avant de partir :**
+- [ ] Autorisation encadrant OCP (filmer avec appareil perso) confirmée.
+- [ ] Smartphone chargé + stockage suffisant ; EPI (casque, gilet, chaussures).
+- [ ] **Objet de taille connue** (mètre/règle) dans le champ → calibration px→mm.
+- [ ] **Carte grise/blanche** de référence → normalisation d'éclairage (si possible).
+- [ ] Carnet/notes : zone, heure, conditions de chaque prise.
+- [ ] **Opérateur/ingénieur dispo pour un avis sec/normal/humide** à chaque prise, avec
+      l'heure — c'est l'ancrage qualitatif (§4). **Idéalement : faire marquer les zones
+      humides sur l'image.**
+
+**Réglages caméra (contre le flou — cause n°1 de perte de données) :**
+- [ ] **Stabiliser** : poser le téléphone sur la rambarde/le carter, le caler ou le
+      scotcher. **Ne pas filmer à main levée** (cause confirmée du flou, §5.2).
+- [ ] Mode pro → **shutter rapide** (1/500s+). Filmer en **60 fps** si possible.
+- [ ] Chercher la **lumière la plus forte**.
+- [ ] **Angle plus perpendiculaire** au tapis (réduit flou ET distorsion de perspective).
+- [ ] **Filmer plus longtemps** : ~20 s → 11 images ; viser **~3 min de matière propre**
+      ≈ 90-100 images exploitables (ordre de grandeur).
+- [ ] Vérifier la validité (pierre propre / boue) **sur toute la durée**, pas juste au départ.
+- [ ] Privilégier le **régime dense** (la norme d'exploitation), pas les moments à bas débit.
+
+---
+
+## 14. Environnement & stack
+
+- **Python : 3.14.6** dans `my_env/` — ⚠️ toujours `./my_env/bin/python`, jamais le
+  `python` système.
+- Paquets : opencv-python 5.0.0.93 · numpy 2.5.1 · pandas 3.0.3 · scikit-learn 1.9.0 ·
+  scikit-image 0.26.0 · matplotlib 3.11.0.
+- `ffmpeg` / `ffprobe` dans `/usr/local/bin/`.
+- Prévu plus tard (Phase 7) : Streamlit + SQLite. **Pas de GPU nécessaire.**
+- ❌ Pas de lecteur PDF installé (les 2 PDF de référence n'ont pas pu être lus auto).
+- ✅ Dépôt git initialisé et poussé (voir §7).
+
+---
+
+## 15. Règles à ne jamais oublier
+
+1. **Le diagnostic de fuite de `clustering_humidite.py` n'est pas décoratif.** NMI > 0.45
+   = le résultat reflète les conditions de tournage (vidéo, régime, éclairage), pas le
+   minerai.
+2. **Ne jamais mélanger régime dense et épars** dans un même jeu de clustering (§3).
+3. **Ne jamais entraîner sur données floues non filtrées** (η²=0.805, §5.4).
+4. **« Le plus net de la fenêtre » ≠ « net »** : si toute la fenêtre est floue, il ressort
+   quand même une image floue. D'où `MANUAL_REJECT` + contrôle visuel.
+5. **Toujours contrôler visuellement** (planche contact, overlay du masque) avant de
+   valider un jeu de données ou un masque — c'est ce qui a révélé le reflet du soleil.
+6. **Un cluster sans ancrage = « non interprété »** — jamais « sec »/« humide » par défaut.
+7. **Le 10% humide n'est pas un déchet, c'est le signal** (§4).
+
+---
+
+## 16. Plan d'action
+
+### Priorité 1 — Vérité terrain (débloque tout)
+- [ ] Faire **marquer par l'ingénieur les zones humides** sur la photo dense du 23/07 (+
+      2-3 autres) → premières étiquettes (§4).
+- [ ] Consigner chaque avis avec **heure + zone** (`ancrages.csv`).
+
+### Priorité 2 — Collecte recadrée sur le lit dense
+- [ ] Refilmer le **régime dense** (la norme), **caméra stabilisée**, angle
+      perpendiculaire, objet de taille connue, ~3 min de matière propre (§13).
+- [ ] Garder distance/angle constants entre sorties (supprime le confondant « session »).
+
+### Priorité 3 — Code (faisable maintenant)
+- [ ] Adapter la **segmentation au régime dense** (§9.A) — **après** avoir 1-2 images
+      étiquetées, pas avant.
+- [ ] Prototyper la **granulométrie (watershed/SAM)** (§9.C).
+- [ ] Vider `MANUAL_REJECT` avant toute nouvelle extraction (§8).
+
+### Priorité 4 — Signalement process (indépendant de la CV)
+- [ ] Remonter au **lavage** la boue/produit constatée sur v2-v5.
+- [ ] Extraire des images horodatées de v2-v5 comme **preuve**.
+
+### Priorité 5 — Sauvegarde
+- [ ] **Copier `v1.mp4` (et les futures vidéos valides) hors du disque** (externe/Drive).
+
+### Quand les données seront là
+- [ ] Extraction → filtrage → features → clustering, **par régime**.
+- [ ] Toujours vérifier le **NMI cluster-vs-source** ; superposer les **ancrages**.
+- [ ] Viser **≥ 10 images/feature** avant de croire un résultat (§12).
+
+---
+
+## 17. Questions ouvertes
+
+- Y a-t-il un **opérateur/ingénieur fiable et disponible** pour donner des avis visuels
+  cohérents sur plusieurs sorties ? *(Un avis déjà obtenu le 23/07 — cf. §4.)*
+- Filmer avec un appareil perso est-il bien **autorisé** sur site ?
+- Livrable exact attendu par la laverie : alerte binaire (OK / trop humide) ? multi-classe
+  (sec / normal / trop humide) ? tendance relative dans le temps ?
+- Existe-t-il déjà une **caméra ou un éclairage fixe** sur zone, ou tout part de zéro ?
+  *(Impact fort : une caméra fixe supprimerait le flou de main et fixerait la perspective.)*
+- Si un **accès labo** devient possible, comment reconvertir les ancrages qualitatifs en
+  points de calibration quantitatifs ?
+
+---
+
+## 18. Glossaire
+
+- **Non supervisé :** découvrir des groupes sans étiquette. · **Clustering :** regrouper
+  des observations similaires. · **K-means :** K centroïdes, assignation au plus proche,
+  itéré. · **Centroïde :** moyenne d'un cluster. · **Inertie :** somme des distances² au
+  centroïde (base du coude). · **Méthode du coude :** repérer le K au-delà duquel ajouter
+  un cluster n'apporte plus grand-chose. · **Silhouette :** qualité d'assignation (−1 à 1).
+- **DBSCAN :** clustering par densité, sans K fixé, détecte les aberrants. ·
+  **StandardScaler :** remet les features à la même échelle (sinon l'intensité 0-255
+  écrase la GLCM 0-1). · **PCA :** réduction de dimension pour visualiser en 2D.
+- **GLCM :** matrice de co-occurrence des niveaux de gris → contraste, homogénéité,
+  énergie, corrélation. · **LBP :** motif binaire local (texture). · **ROI :** portion de
+  l'image contenant le matériau. · **Top-hat :** `image − ouverture`, isole les objets
+  clairs plus petits que le noyau (utilisé pour retirer le reflet du soleil).
+- **Variance du Laplacien / Tenengrad :** mesures de netteté (filtrage du flou). ·
+  **η² (eta²) :** part de variance d'une grandeur expliquée par l'appartenance au cluster.
+  · **NMI / ARI :** mesures d'accord entre deux partitions (ici : clusters vs source, pour
+  détecter la fuite).
+- **Point d'ancrage :** image liée à une référence connue, pour interpréter les clusters.
+  · **Ancrage qualitatif :** ancrage basé sur un jugement humain (sec/normal/humide),
+  faute de labo. · **Vérité terrain :** la référence qui valide un résultat.
+- **Watershed :** segmentation qui sépare les grains qui se touchent. · **SAM :** Segment
+  Anything Model (segmentation zero-shot). · **DINOv2 :** réseau pré-entraîné pour
+  embeddings non supervisés. · **PSD / D50 / D80 :** distribution de tailles ; taille sous
+  laquelle se trouvent 50% / 80% du matériau.
+
+---
+
+*Fin du document de reprise global. Colle-le en entier au début d'une nouvelle session.*
